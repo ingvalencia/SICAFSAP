@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+
+		<!-- SAP DI API requiere x86 -->
+		<PlatformTarget>x86</PlatformTarget>
+		<Prefer32Bit>true</Prefer32Bit>
+
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+
+		<UserSecretsId>dotnet-SICAFSAP-ef341ca9-ffc7-4c75-9bff-151573532d20</UserSecretsId>
+	</PropertyGroup>
+
+	<!-- ===========================
+       PAQUETES .NET
+       =========================== -->
+	<ItemGroup>
+		<!-- SQL Server -->
+		<PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.0" />
+
+		<!-- Worker / Windows Service -->
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+		<PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+
+		<!-- SERILOG (ALINEADO Y COMPATIBLE) -->
+		<PackageReference Include="Serilog" Version="4.2.0" />
+		<PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
+		<PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+		<PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
+	</ItemGroup>
+
+	<!-- ===========================
+       SAP DI API
+       =========================== -->
+	<ItemGroup>
+		<Reference Include="SAPbobsCOM">
+			<HintPath>SAP\Interop.SAPbobsCOM.dll</HintPath>
+			<EmbedInteropTypes>false</EmbedInteropTypes>
+			<Private>true</Private>
+		</Reference>
+
+		<Reference Include="SAPbouiCOM">
+			<HintPath>SAP\Interop.SAPbouiCOM.dll</HintPath>
+			<EmbedInteropTypes>false</EmbedInteropTypes>
+			<Private>true</Private>
+		</Reference>
+	</ItemGroup>
+
+</Project>
