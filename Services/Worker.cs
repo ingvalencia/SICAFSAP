@@ -2,6 +2,8 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Data.SqlClient;
+using System.Linq;
+
 
 public class Worker : BackgroundService
 {
@@ -187,70 +189,150 @@ public class Worker : BackgroundService
                     // ================================
                     // 2.4 PROCESAR AJUSTES
                     // ================================
-                    foreach (var a in ajustes)
+                    static string GetBaseLocal(string alm)
                     {
+                        if (string.IsNullOrWhiteSpace(alm)) return "";
+                        alm = alm.Trim();
+                        int p = alm.IndexOf('-');
+                        return p > 0 ? alm.Substring(0, p) : alm;
+                    }
+
+                    var gruposAjustes = ajustes
+                        .GroupBy(a => new { Base = GetBaseLocal(a.Almacen), Tipo = a.Tipo })
+                        .OrderBy(g => g.Key.Base)
+                        .ThenBy(g => g.Key.Tipo);
+
+                    foreach (var g in gruposAjustes)
+                    {
+                        var baseLocal = g.Key.Base; // CJN, AAA, etc
+                        var tipo = g.Key.Tipo;      // "E" o "S"
+
                         try
                         {
-                            _logger.LogInformation(
-                                "Ajuste {Id} | Item={Item} | Cant={Qty} | Tipo={Tipo}",
-                                a.Id, a.Item, a.Qty, a.Tipo
-                            );
+                            string cuenta = tipo == "E" ? cuentaEM : cuentaSM;
 
-                            if (!_sap.EsArticuloInventario(a.Item))
-                                throw new Exception("Artículo no inventariable");
+                            // ✅ Separar inventariables / no inventariables
+                            var inventariables = g
+                                .Where(a => _sap.EsArticuloInventario(a.Item))
+                                .ToList();
 
-                            string cuenta = a.Tipo == "E" ? cuentaEM : cuentaSM;
+                            var noInventariables = g
+                                .Where(a => !_sap.EsArticuloInventario(a.Item))
+                                .ToList();
+
+                            if (inventariables.Count == 0)
+                                throw new Exception("No hay artículos inventariables para generar documento SAP");
+
+                            // Líneas válidas para SAP
+                            var lines = inventariables.Select(a => (
+                                ItemCode: a.Item,
+                                QtyAbs: a.Qty,
+                                Warehouse: a.Almacen,
+                                AccountCode: cuenta,
+                                ProjectCode: proyecto
+                            )).ToList();
+
+                            string comments = g
+                            .Select(x => x.Comentarios)
+                            .FirstOrDefault(c => !string.IsNullOrWhiteSpace(c));
+
+                            if (comments == null)
+                                comments = "";
+
 
                             var (docEntry, docNum) =
-                                _sap.CreateInventoryAdjustment(
-                                    a.Tipo,
-                                    a.Item,
-                                    a.Qty,
-                                    a.Almacen,
-                                    cuenta,
-                                    proyecto,
-                                    a.Comentarios,
+                                _sap.CreateInventoryAdjustmentBatch(
+                                    tipo,
+                                    lines,
+                                    comments,
                                     fechaInventario
                                 );
 
-                            using var okCmd = new SqlCommand(@"
-                                UPDATE CAP_INVENTARIO_AJUSTES_SAP
-                                SET estado_proceso = 2,
-                                    tipo_documento_sap = @tipo,
-                                    DocEntry_sap = @docEntry,
-                                    DocNum_sap = @docNum,
-                                    fecha_procesado = GETDATE(),
-                                    usuario_procesado = 'SICAFSAP'
-                                WHERE id_ajuste = @id
-                            ", conn);
+                            // UPDATE OK para inventariables (mismo DocEntry/DocNum)
+                            var idsOk = inventariables.Select(x => x.Id).ToList();
+                            var inParamsOk = idsOk.Select((_, idx) => $"@id{idx}").ToArray();
 
-                            okCmd.Parameters.AddWithValue("@id", a.Id);
-                            okCmd.Parameters.AddWithValue("@tipo", a.Tipo == "E" ? "OIGN" : "OIGE");
-                            okCmd.Parameters.AddWithValue("@docEntry", docEntry);
-                            okCmd.Parameters.AddWithValue("@docNum", docNum);
+                            string sqlOk = $@"
+UPDATE CAP_INVENTARIO_AJUSTES_SAP
+SET estado_proceso = 2,
+    tipo_documento_sap = @tipoDoc,
+    DocEntry_sap = @docEntry,
+    DocNum_sap = @docNum,
+    fecha_procesado = GETDATE(),
+    usuario_procesado = 'SICAFSAP'
+WHERE id_ajuste IN ({string.Join(",", inParamsOk)})
+";
 
-                            await okCmd.ExecuteNonQueryAsync(stoppingToken);
-                            ok++;
+                            using (var okCmd = new SqlCommand(sqlOk, conn))
+                            {
+                                okCmd.Parameters.AddWithValue("@tipoDoc", tipo == "E" ? "OIGN" : "OIGE");
+                                okCmd.Parameters.AddWithValue("@docEntry", docEntry);
+                                okCmd.Parameters.AddWithValue("@docNum", docNum);
+
+                                for (int i = 0; i < idsOk.Count; i++)
+                                    okCmd.Parameters.AddWithValue($"@id{i}", idsOk[i]);
+
+                                await okCmd.ExecuteNonQueryAsync(stoppingToken);
+                            }
+
+                            ok += idsOk.Count;
+
+                            // UPDATE ERROR para NO inventariables
+                            if (noInventariables.Count > 0)
+                            {
+                                var idsNI = noInventariables.Select(x => x.Id).ToList();
+                                var inParamsNI = idsNI.Select((_, idx) => $"@nid{idx}").ToArray();
+
+                                string sqlNI = $@"
+UPDATE CAP_INVENTARIO_AJUSTES_SAP
+SET estado_proceso = 9,
+    mensaje_error_sap = 'Artículo no inventariable',
+    fecha_procesado = GETDATE(),
+    usuario_procesado = 'SICAFSAP'
+WHERE id_ajuste IN ({string.Join(",", inParamsNI)})
+";
+
+                                using (var niCmd = new SqlCommand(sqlNI, conn))
+                                {
+                                    for (int i = 0; i < idsNI.Count; i++)
+                                        niCmd.Parameters.AddWithValue($"@nid{i}", idsNI[i]);
+
+                                    await niCmd.ExecuteNonQueryAsync(stoppingToken);
+                                }
+
+                                err += idsNI.Count;
+                            }
                         }
                         catch (Exception ex)
                         {
-                            using var errCmd = new SqlCommand(@"
-                                UPDATE CAP_INVENTARIO_AJUSTES_SAP
-                                SET estado_proceso = 9,
-                                    mensaje_error_sap = @error,
-                                    intentos_envio = ISNULL(intentos_envio,0) + 1,
-                                    fecha_ultimo_intento = GETDATE(),
-                                    fecha_procesado = GETDATE(),
-                                    usuario_procesado = 'SICAFSAP'
-                                WHERE id_ajuste = @id
-                            ", conn);
+                            var ids = g.Select(x => x.Id).ToList();
+                            var inParams = ids.Select((_, idx) => $"@id{idx}").ToArray();
 
-                            errCmd.Parameters.AddWithValue("@id", a.Id);
-                            errCmd.Parameters.AddWithValue("@error", ex.Message);
-                            await errCmd.ExecuteNonQueryAsync(stoppingToken);
-                            err++;
+                            string sqlErr = $@"
+UPDATE CAP_INVENTARIO_AJUSTES_SAP
+SET estado_proceso = 9,
+    mensaje_error_sap = @error,
+    intentos_envio = ISNULL(intentos_envio,0) + 1,
+    fecha_ultimo_intento = GETDATE(),
+    fecha_procesado = GETDATE(),
+    usuario_procesado = 'SICAFSAP'
+WHERE id_ajuste IN ({string.Join(",", inParams)})
+";
+
+                            using (var errCmd = new SqlCommand(sqlErr, conn))
+                            {
+                                errCmd.Parameters.AddWithValue("@error", ex.Message);
+
+                                for (int i = 0; i < ids.Count; i++)
+                                    errCmd.Parameters.AddWithValue($"@id{i}", ids[i]);
+
+                                await errCmd.ExecuteNonQueryAsync(stoppingToken);
+                            }
+
+                            err += ids.Count;
                         }
                     }
+
 
                     // ================================
                     // 2.5 CIERRE OK
