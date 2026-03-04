@@ -35,9 +35,7 @@ public class Worker : BackgroundService
         using var conn = new SqlConnection(_config.GetConnectionString("SqlServer"));
         await conn.OpenAsync(stoppingToken);
 
-        // ================================
-        // CONECTAR SAP (UNA SOLA VEZ)
-        // ================================
+
         _logger.LogInformation("Conectando a SAP...");
         _sap.Connect(
             _config["SapDiApi:Server"],
@@ -51,16 +49,12 @@ public class Worker : BackgroundService
         );
         _logger.LogInformation("SAP conectado correctamente");
 
-        // ================================
-        // LOOP PERMANENTE
-        // ================================
+
         while (!stoppingToken.IsCancellationRequested)
         {
             var señales = new List<(int IdSignal, int IdCierre)>();
 
-            // =========================================
-            // 1) OBTENER SEÑALES PENDIENTES + ESTATUS=3
-            // =========================================
+
             using (var cmd = new SqlCommand(@"
                 SELECT s.id_signal,
                        s.id_cierre
@@ -89,9 +83,7 @@ public class Worker : BackgroundService
                 continue;
             }
 
-            // ================================
-            // 2) PROCESAR CADA SEÑAL
-            // ================================
+
             foreach (var s in señales)
             {
                 int idSignal = s.IdSignal;
@@ -101,9 +93,7 @@ public class Worker : BackgroundService
                 _logger.LogInformation("Señal detectada | id_signal={Signal} | id_cierre={Cierre}",
                     idSignal, idCierre);
 
-                // =====================================
-                // 2.1 BLOQUEAR CIERRE (evitar duplicado)
-                // =====================================
+
                 using (var lockCmd = new SqlCommand(@"
                     UPDATE CAP_INVENTARIO_CIERRE
                     SET estatus_cierre  = 4
@@ -126,9 +116,7 @@ public class Worker : BackgroundService
 
                 try
                 {
-                    // ================================
-                    // 2.2 CONFIG CONTABLE
-                    // ================================
+
                     string proyecto;
                     string cuentaEM;
                     string cuentaSM;
@@ -152,9 +140,7 @@ public class Worker : BackgroundService
                         fechaInventario = rdCfg.GetDateTime(3);
                     }
 
-                    // ================================
-                    // 2.3 AJUSTES PENDIENTES
-                    // ================================
+
                     var ajustes = new List<(int Id, string Item, decimal Qty, string Tipo, string Almacen, string Comentarios)>();
 
                     using (var cmdAjustes = new SqlCommand(@"
@@ -186,9 +172,7 @@ public class Worker : BackgroundService
                         }
                     }
 
-                    // ================================
-                    // 2.4 PROCESAR AJUSTES
-                    // ================================
+
                     static string GetBaseLocal(string alm)
                     {
                         if (string.IsNullOrWhiteSpace(alm)) return "";
@@ -204,14 +188,14 @@ public class Worker : BackgroundService
 
                     foreach (var g in gruposAjustes)
                     {
-                        var baseLocal = g.Key.Base; // CJN, AAA, etc
+                        var baseLocal = g.Key.Base; //
                         var tipo = g.Key.Tipo;      // "E" o "S"
 
                         try
                         {
                             string cuenta = tipo == "E" ? cuentaEM : cuentaSM;
 
-                            // ✅ Separar inventariables / no inventariables
+
                             var inventariables = g
                                 .Where(a => _sap.EsArticuloInventario(a.Item))
                                 .ToList();
@@ -223,7 +207,7 @@ public class Worker : BackgroundService
                             if (inventariables.Count == 0)
                                 throw new Exception("No hay artículos inventariables para generar documento SAP");
 
-                            // Líneas válidas para SAP
+
                             var lines = inventariables.Select(a => (
                                 ItemCode: a.Item,
                                 QtyAbs: a.Qty,
@@ -248,20 +232,20 @@ public class Worker : BackgroundService
                                     fechaInventario
                                 );
 
-                            // UPDATE OK para inventariables (mismo DocEntry/DocNum)
+
                             var idsOk = inventariables.Select(x => x.Id).ToList();
                             var inParamsOk = idsOk.Select((_, idx) => $"@id{idx}").ToArray();
 
                             string sqlOk = $@"
-UPDATE CAP_INVENTARIO_AJUSTES_SAP
-SET estado_proceso = 2,
-    tipo_documento_sap = @tipoDoc,
-    DocEntry_sap = @docEntry,
-    DocNum_sap = @docNum,
-    fecha_procesado = GETDATE(),
-    usuario_procesado = 'SICAFSAP'
-WHERE id_ajuste IN ({string.Join(",", inParamsOk)})
-";
+                            UPDATE CAP_INVENTARIO_AJUSTES_SAP
+                            SET estado_proceso = 2,
+                                tipo_documento_sap = @tipoDoc,
+                                DocEntry_sap = @docEntry,
+                                DocNum_sap = @docNum,
+                                fecha_procesado = GETDATE(),
+                                usuario_procesado = 'SICAFSAP'
+                            WHERE id_ajuste IN ({string.Join(",", inParamsOk)})
+                            ";
 
                             using (var okCmd = new SqlCommand(sqlOk, conn))
                             {
@@ -277,20 +261,20 @@ WHERE id_ajuste IN ({string.Join(",", inParamsOk)})
 
                             ok += idsOk.Count;
 
-                            // UPDATE ERROR para NO inventariables
+
                             if (noInventariables.Count > 0)
                             {
                                 var idsNI = noInventariables.Select(x => x.Id).ToList();
                                 var inParamsNI = idsNI.Select((_, idx) => $"@nid{idx}").ToArray();
 
                                 string sqlNI = $@"
-UPDATE CAP_INVENTARIO_AJUSTES_SAP
-SET estado_proceso = 9,
-    mensaje_error_sap = 'Artículo no inventariable',
-    fecha_procesado = GETDATE(),
-    usuario_procesado = 'SICAFSAP'
-WHERE id_ajuste IN ({string.Join(",", inParamsNI)})
-";
+                                UPDATE CAP_INVENTARIO_AJUSTES_SAP
+                                SET estado_proceso = 9,
+                                    mensaje_error_sap = 'Artículo no inventariable',
+                                    fecha_procesado = GETDATE(),
+                                    usuario_procesado = 'SICAFSAP'
+                                WHERE id_ajuste IN ({string.Join(",", inParamsNI)})
+                                ";
 
                                 using (var niCmd = new SqlCommand(sqlNI, conn))
                                 {
@@ -309,15 +293,15 @@ WHERE id_ajuste IN ({string.Join(",", inParamsNI)})
                             var inParams = ids.Select((_, idx) => $"@id{idx}").ToArray();
 
                             string sqlErr = $@"
-UPDATE CAP_INVENTARIO_AJUSTES_SAP
-SET estado_proceso = 9,
-    mensaje_error_sap = @error,
-    intentos_envio = ISNULL(intentos_envio,0) + 1,
-    fecha_ultimo_intento = GETDATE(),
-    fecha_procesado = GETDATE(),
-    usuario_procesado = 'SICAFSAP'
-WHERE id_ajuste IN ({string.Join(",", inParams)})
-";
+                            UPDATE CAP_INVENTARIO_AJUSTES_SAP
+                            SET estado_proceso = 9,
+                                mensaje_error_sap = @error,
+                                intentos_envio = ISNULL(intentos_envio,0) + 1,
+                                fecha_ultimo_intento = GETDATE(),
+                                fecha_procesado = GETDATE(),
+                                usuario_procesado = 'SICAFSAP'
+                            WHERE id_ajuste IN ({string.Join(",", inParams)})
+                            ";
 
                             using (var errCmd = new SqlCommand(sqlErr, conn))
                             {
@@ -334,9 +318,7 @@ WHERE id_ajuste IN ({string.Join(",", inParams)})
                     }
 
 
-                    // ================================
-                    // 2.5 CIERRE OK
-                    // ================================
+
                     using var finCmd = new SqlCommand(@"
                         UPDATE CAP_INVENTARIO_CIERRE
                         SET estatus_cierre  = 5
@@ -361,9 +343,7 @@ WHERE id_ajuste IN ({string.Join(",", inParams)})
                 }
                 finally
                 {
-                    // ================================
-                    // 2.6 MARCAR SEÑAL PROCESADA
-                    // ================================
+                    
                     using var updSignal = new SqlCommand(@"
                         UPDATE CAP_SAP_SIGNAL
                         SET procesado = 1,

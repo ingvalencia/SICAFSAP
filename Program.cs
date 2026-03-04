@@ -27,22 +27,18 @@ try
         .UseSerilog()
         .ConfigureServices(services =>
         {
-            // ================================
-            // CONFIGURACIÓN CRÍTICA
-            // ================================
+
             services.Configure<HostOptions>(options =>
             {
-                // Evita que el servicio se detenga si el Worker falla
+
                 options.BackgroundServiceExceptionBehavior =
                     BackgroundServiceExceptionBehavior.Ignore;
             });
 
-            // ================================
-            // DEPENDENCIAS
-            // ================================
+
             services.AddSingleton<SapService>();
 
-            // El Worker depende de SapService
+           
             services.AddHostedService<Worker>();
         })
         .Build();

@@ -80,14 +80,14 @@ public sealed class SapService : IDisposable
 
         Documents doc = (Documents)_company.GetBusinessObject(objType);
 
-        // 
+        //
         doc.DocDate = fechaDocumento;
         doc.TaxDate = fechaDocumento;
 
-        // 
+        //
         doc.Reference2 = "AJUSTEINV";
 
-        // 
+        //
         doc.Comments = comments;
 
         doc.Lines.ItemCode = itemCode;
@@ -181,9 +181,6 @@ public sealed class SapService : IDisposable
 
         return (docEntry, docNum);
     }
-
-
-
 
     public void Dispose()
     {
