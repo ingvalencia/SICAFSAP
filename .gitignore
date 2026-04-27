@@ -13,3 +13,19 @@ Logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Builds / publish .NET
+bin/
+obj/
+publish/
+DeployFinal/
+
+# Logs
+Logs/
+*.log
+
+# Config sensible
+appsettings.Development.json
+*.user
+*.suo
+.vs/
