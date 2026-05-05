@@ -323,8 +323,8 @@ public class Worker : BackgroundService
                         UPDATE CAP_INVENTARIO_CIERRE
                         SET estatus_cierre = 5,
                             procesado_sap = CASE WHEN @err = 0 THEN 1 ELSE 0 END,
-                            fecha_ultimo_envio = GETDATE(),
-                            usuario_ultimo_envio = 'SICAFSAP'
+                            fecha_ultimo_envio_sap = GETDATE(),
+                            usuario_ultimo_envio_sap = 'SICAFSAP'
                         WHERE id_cierre = @id
                     ", conn);
 
@@ -341,8 +341,8 @@ public class Worker : BackgroundService
                         UPDATE CAP_INVENTARIO_CIERRE
                         SET estatus_cierre = 9,
                             procesado_sap = 0,
-                            fecha_ultimo_envio = GETDATE(),
-                            usuario_ultimo_envio = 'SICAFSAP'
+                            fecha_ultimo_envio_sap = GETDATE(),
+                            usuario_ultimo_envio_sap = 'SICAFSAP'
                         WHERE id_cierre = @id
                     ", conn);
 
