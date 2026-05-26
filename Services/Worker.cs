@@ -193,7 +193,8 @@ public class Worker : BackgroundService
 
             try
             {
-              string cuenta = tipo == "E" ? cuentaEM : cuentaSM;
+              string tipoSap = tipo == "S" ? "E" : "S";
+              string cuenta = tipo == "S" ? cuentaEM : cuentaSM;
 
 
               var inventariables = g
@@ -226,11 +227,11 @@ public class Worker : BackgroundService
 
               var (docEntry, docNum) =
                   _sap.CreateInventoryAdjustmentBatch(
-                      tipo,
-                      lines,
-                      comments,
-                      fechaInventario
-                  );
+                  tipoSap,
+                  lines,
+                  comments,
+                  fechaInventario
+              );
 
 
               var idsOk = inventariables.Select(x => x.Id).ToList();
@@ -249,7 +250,7 @@ public class Worker : BackgroundService
 
               using (var okCmd = new SqlCommand(sqlOk, conn))
               {
-                okCmd.Parameters.AddWithValue("@tipoDoc", tipo == "E" ? "OIGN" : "OIGE");
+                okCmd.Parameters.AddWithValue("@tipoDoc", tipo == "S" ? "OIGN" : "OIGE");
                 okCmd.Parameters.AddWithValue("@docEntry", docEntry);
                 okCmd.Parameters.AddWithValue("@docNum", docNum);
 
