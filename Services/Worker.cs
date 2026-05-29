@@ -145,13 +145,13 @@ public class Worker : BackgroundService
 
           using (var cmdAjustes = new SqlCommand(@"
                         SELECT id_ajuste,
-                               ItemCode,
-                               ABS(cantidad_ajuste),
-                               tipo_ajuste,
-                               almacen,
-                               comentarios
-                        FROM CAP_INVENTARIO_AJUSTES_SAP
-                        WHERE id_cierre = @id
+                                ItemCode,
+                                ABS(cantidad_ajuste),
+                                tipo_ajuste,
+                                almacen,
+                                comentarios
+                          FROM CAP_INVENTARIO_AJUSTES_SAP
+                          WHERE id_cierre = @id
                           AND estado_proceso = 1
                         ORDER BY id_ajuste
                     ", conn))
@@ -197,17 +197,32 @@ public class Worker : BackgroundService
               string cuenta = tipo == "S" ? cuentaEM : cuentaSM;
 
 
-              var inventariables = g
-                  .Where(a => _sap.EsArticuloInventario(a.Item))
+              var validacionInventario = g
+                  .Select(a => new
+                  {
+                      Ajuste = a,
+                      EsInventariable = _sap.EsArticuloInventario(a.Item)
+                  })
                   .ToList();
 
-              var noInventariables = g
-                  .Where(a => !_sap.EsArticuloInventario(a.Item))
+              var noInventariables = validacionInventario
+                  .Where(x => !x.EsInventariable)
+                  .Select(x => x.Ajuste)
+                  .ToList();
+
+              if (noInventariables.Count > 0)
+                  throw new Exception(
+                      "Hay artículos no inventariables. No se generó ningún documento SAP: " +
+                      string.Join(", ", noInventariables.Select(x => x.Item))
+                  );
+
+              var inventariables = validacionInventario
+                  .Where(x => x.EsInventariable)
+                  .Select(x => x.Ajuste)
                   .ToList();
 
               if (inventariables.Count == 0)
-                throw new Exception("No hay artículos inventariables para generar documento SAP");
-
+                  throw new Exception("No hay artículos inventariables para generar documento SAP");
 
               var lines = inventariables.Select(a => (
                   ItemCode: a.Item,
