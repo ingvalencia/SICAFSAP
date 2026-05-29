@@ -38,10 +38,30 @@ public sealed class SapService : IDisposable
         }
     }
 
+    private static string NormalizarItemCodeSap(string itemCode)
+    {
+        if (string.IsNullOrWhiteSpace(itemCode))
+            return "";
+
+        itemCode = itemCode.Trim();
+
+        int i = 0;
+
+        while (i < itemCode.Length && itemCode[i] == '0')
+            i++;
+
+        if (i < itemCode.Length && char.IsLetter(itemCode[i]))
+            return itemCode.Substring(i);
+
+        return itemCode;
+    }
+
     public bool EsArticuloInventario(string itemCode)
     {
         if (_company == null)
             return false;
+
+        itemCode = NormalizarItemCodeSap(itemCode).Replace("'", "''");
 
         var rs = (Recordset)_company.GetBusinessObject(BoObjectTypes.BoRecordset);
 
@@ -90,7 +110,7 @@ public sealed class SapService : IDisposable
         //
         doc.Comments = comments;
 
-        doc.Lines.ItemCode = itemCode;
+        doc.Lines.ItemCode = NormalizarItemCodeSap(itemCode);
         doc.Lines.WarehouseCode = warehouse;
         doc.Lines.Quantity = (double)quantityAbs;
         doc.Lines.AccountCode = accountCode;
@@ -120,24 +140,36 @@ public sealed class SapService : IDisposable
     }
 
     public (int DocEntry, int DocNum) CreateInventoryAdjustmentBatch(
-    string tipoAjuste,
-    List<(string ItemCode, decimal QtyAbs, string Warehouse, string AccountCode, string ProjectCode)> lines,
-    string comments,
-    DateTime fechaDocumento
-)
+      string tipoAjuste,
+      List<(string ItemCode, decimal QtyAbs, string Warehouse, string AccountCode, string ProjectCode)> lines,
+      string comments,
+      DateTime fechaDocumento
+  )
+  {
+    if (_company == null || !_company.Connected)
+        throw new Exception("SAP no conectado");
+
+    if (lines == null || lines.Count == 0)
+        throw new Exception("No hay líneas para el documento SAP");
+
+    BoObjectTypes objType =
+        tipoAjuste == "E"
+            ? BoObjectTypes.oInventoryGenEntry
+            : BoObjectTypes.oInventoryGenExit;
+
+    bool transaccionIniciada = false;
+    Documents? doc = null;
+    Recordset? rs = null;
+
+    try
     {
-        if (_company == null || !_company.Connected)
-            throw new Exception("SAP no conectado");
+        if (!_company.InTransaction)
+        {
+            _company.StartTransaction();
+            transaccionIniciada = true;
+        }
 
-        if (lines == null || lines.Count == 0)
-            throw new Exception("No hay líneas para el documento SAP");
-
-        BoObjectTypes objType =
-            tipoAjuste == "E"
-                ? BoObjectTypes.oInventoryGenEntry   // OIGN
-                : BoObjectTypes.oInventoryGenExit;   // OIGE
-
-        Documents doc = (Documents)_company.GetBusinessObject(objType);
+        doc = (Documents)_company.GetBusinessObject(objType);
 
         doc.DocDate = fechaDocumento;
         doc.TaxDate = fechaDocumento;
@@ -151,7 +183,7 @@ public sealed class SapService : IDisposable
             if (!first)
                 doc.Lines.Add();
 
-            doc.Lines.ItemCode = ln.ItemCode;
+            doc.Lines.ItemCode = NormalizarItemCodeSap(ln.ItemCode);
             doc.Lines.WarehouseCode = ln.Warehouse;
             doc.Lines.Quantity = (double)ln.QtyAbs;
             doc.Lines.AccountCode = ln.AccountCode;
@@ -161,27 +193,48 @@ public sealed class SapService : IDisposable
         }
 
         int rc = doc.Add();
+
         if (rc != 0)
         {
-            _company.GetLastError(out int err, out string msg);
-            Marshal.ReleaseComObject(doc);
-            throw new Exception($"SAP Add error {err}: {msg}");
+            _company.GetLastError(out int errCode, out string errMsg);
+
+            if (transaccionIniciada && _company.InTransaction)
+                _company.EndTransaction(BoWfTransOpt.wf_RollBack);
+
+            throw new Exception($"SAP Add error {errCode}: {errMsg}");
         }
 
         int docEntry = int.Parse(_company.GetNewObjectKey());
 
-        Recordset rs = (Recordset)_company.GetBusinessObject(BoObjectTypes.BoRecordset);
+        rs = (Recordset)_company.GetBusinessObject(BoObjectTypes.BoRecordset);
+
         string tabla = tipoAjuste == "E" ? "OIGN" : "OIGE";
+
         rs.DoQuery($"SELECT DocNum FROM {tabla} WHERE DocEntry = {docEntry}");
 
         int docNum = Convert.ToInt32(rs.Fields.Item(0).Value);
 
-        Marshal.ReleaseComObject(rs);
-        Marshal.ReleaseComObject(doc);
+        if (transaccionIniciada && _company.InTransaction)
+            _company.EndTransaction(BoWfTransOpt.wf_Commit);
 
         return (docEntry, docNum);
     }
+    catch
+    {
+        if (transaccionIniciada && _company.InTransaction)
+            _company.EndTransaction(BoWfTransOpt.wf_RollBack);
 
+        throw;
+    }
+    finally
+    {
+        if (rs != null)
+            Marshal.ReleaseComObject(rs);
+
+        if (doc != null)
+            Marshal.ReleaseComObject(doc);
+    }
+    }
     public void Dispose()
     {
         try
